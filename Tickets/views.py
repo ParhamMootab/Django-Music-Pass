@@ -4,10 +4,19 @@ from . import models, serializer
 from rest_framework.response import Response
 from rest_framework import status
 from django.core.exceptions import ObjectDoesNotExist
+from User.authentication import JWTAuthentication
+from rest_framework.permissions import IsAuthenticatedOrReadOnly
 
 # Create your views here.
 class TicketingAPI(views.APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticatedOrReadOnly]
     def get(self, request):
+        """GET request for /ticket
+
+        Returns:
+            All the tickets or tickets from and to a specified seat number
+        """
         try:
             from_seat = int(request.query_params['from'])
             to_seat = int(request.query_params['to'])
@@ -25,18 +34,26 @@ class TicketingAPI(views.APIView):
         return Response(json_seialized.data)
     
     def post(self, request):
-        desirilized_data = serializer.TicketSerializer(data=request.data)
+        """POST request for creating a new ticket
+
+        Returns:
+            Success or Failure Message
+        """
+        desirilized_data = serializer.TicketSerializer(data=request.data, context={'request': request})
         if desirilized_data.is_valid():
+            #desirilized_data.validated_data['user_id'] = request.user['user_id']
             desirilized_data.save()
             return Response({
                 "Type": "Success",
                 "Message": "Your ticket for seat number {} is booked!".format(desirilized_data.validated_data.get("seat_number"))
-            }, status=status.HTTP_200_OK)
+            }, status=status.HTTP_201_CREATED)
         else:
             return Response(desirilized_data.errors, status=status.HTTP_400_BAD_REQUEST)
         
     
 class SingleTicketAPI(views.APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticatedOrReadOnly]
     def get(self, request, seat_number):
         try:
             seat = models.Ticket.objects.get(seat_number=seat_number)
@@ -50,7 +67,13 @@ class SingleTicketAPI(views.APIView):
     
     def delete(self, request, seat_number):
         try:
-            models.Ticket.objects.get(seat_number=seat_number).delete()
+            ticket_to_delete = models.Ticket.objects.get(seat_number=seat_number)
+            if ticket_to_delete.user_id == request.user:
+                ticket_to_delete.delete()
+            else:
+                return Response({
+                    "message": "You are not the owner of this ticket."
+                    }, status=status.HTTP_403_FORBIDDEN)
         except ObjectDoesNotExist:
             return Response({
                 "Type": "Fail",
@@ -71,10 +94,17 @@ class SingleTicketAPI(views.APIView):
                 "Type": "Fail",
                 "Message": "Please enter a valid 'desired' parameter."
             }, status=status.HTTP_400_BAD_REQUEST)
+            
         try:
             seat = models.Ticket.objects.get(seat_number=seat_number)
-            seat.seat_number = desired
-            seat.save()
+            if seat.user_id == request.user:
+                seat.seat_number = desired
+                seat.save()
+            else:
+                return Response({
+                    "message": "You are not the owner of this ticket."
+                    }, status=status.HTTP_403_FORBIDDEN)
+            
         except ObjectDoesNotExist:
             return Response({
                 "Type": "Fail",
